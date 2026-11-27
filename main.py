@@ -345,133 +345,160 @@ TICKER_TOP = TICKER_STRIP_TOP + 1            # 969
 
 
 # ---------------------------------------------------------------------------
-# Flat pictograms, drawn in an 86x86 local box over a pale anchor disc.
+# Card pictograms.  Every illustration is built from flat fills inside an
+# 86x86 square; the origin of that square is handed to the painter below.
 # ---------------------------------------------------------------------------
 
-def draw_icon(cv, kind, ox, oy, accent):
-    def box(x, y, w, h, c):
-        cv.rect(ox + x, oy + y, w, h, c)
+class Icon:
+    """Painter that places simple newsroom pictograms on a story card."""
 
-    def ln(x0, y0, x1, y1, c, t=2):
-        cv.line(ox + x0, oy + y0, ox + x1, oy + y1, c, t)
+    def __init__(self, canvas, origin_x, origin_y, accent):
+        self.canvas = canvas
+        self.origin_x = origin_x
+        self.origin_y = origin_y
+        self.accent = accent
 
-    def poly(pts, c):
-        cv.poly([(ox + x, oy + y) for x, y in pts], c)
+    def slab(self, x, y, width, height, color):
+        self.canvas.rect(self.origin_x + x, self.origin_y + y,
+                         width, height, color)
 
-    def dot(cx, cy, r, c):
-        cv.disc(ox + cx, oy + cy, r, c)
+    def stroke(self, x1, y1, x2, y2, color, weight=2):
+        self.canvas.line(self.origin_x + x1, self.origin_y + y1,
+                         self.origin_x + x2, self.origin_y + y2,
+                         color, weight)
 
-    cv.disc(ox + 43, oy + 43, 41, ICON_BG)
+    def polygon(self, corners, color):
+        shifted = [(self.origin_x + px, self.origin_y + py)
+                   for px, py in corners]
+        self.canvas.poly(shifted, color)
 
-    if kind == "gulf":
-        ln(32, 33, 20, 17, INK, 2)
-        ln(54, 33, 66, 17, INK, 2)
-        ln(32, 37, 20, 50, INK, 2)
-        ln(54, 37, 66, 50, INK, 2)
-        box(12, 16, 16, 3, INK)
-        box(58, 16, 16, 3, INK)
-        box(12, 49, 16, 3, INK)
-        box(58, 49, 16, 3, INK)
-        box(32, 27, 22, 14, INK)
-        dot(43, 34, 3, WHITE)
-        # Air-defence radar under attack: a burst behind the dish plus an
-        # incoming projectile with a pointed nose and swept tail fins.
-        poly([(22, 52), (26, 61), (35, 64), (26, 67), (22, 78),
-              (18, 67), (9, 64), (18, 61)], RED)
-        cv.ring(ox + 22, oy + 64, 9, INK, 2)
-        ln(22, 76, 22, 84, INK, 2)
-        ln(14, 84, 30, 84, INK, 2)
-        poly([(38, 72), (47, 79), (79, 59), (71, 51)], accent)
-        poly([(72, 58), (83, 61), (77, 51)], INK)
-        poly([(47, 79), (46, 71), (54, 75)], INK)
+    def disk(self, cx, cy, radius, color):
+        self.canvas.disc(self.origin_x + cx, self.origin_y + cy,
+                         radius, color)
 
-    elif kind == "ship":
-        poly([(0, 10), (16, 10), (11, 60), (0, 60)], MUTED)
-        poly([(86, 10), (70, 10), (75, 60), (86, 60)], MUTED)
-        poly([(14, 58), (72, 58), (64, 76), (22, 76)], INK)
-        box(30, 46, 26, 12, INK)
-        box(38, 38, 10, 8, INK)
-        ln(43, 38, 43, 18, INK, 2)
-        ln(43, 20, 63, 32, RED, 2)
-        poly([(66, 34), (73, 38), (62, 41)], RED)
-        ln(6, 81, 26, 81, accent, 2)
-        ln(30, 81, 50, 81, accent, 2)
-        ln(54, 81, 74, 81, accent, 2)
+    def hoop(self, cx, cy, radius, color, weight=3):
+        self.canvas.ring(self.origin_x + cx, self.origin_y + cy,
+                         radius, color, weight)
 
-    elif kind == "grid":
-        ln(20, 80, 39, 12, INK, 3)
-        ln(66, 80, 47, 12, INK, 3)
-        ln(24, 62, 62, 62, INK, 3)
-        ln(29, 44, 57, 44, INK, 3)
-        ln(34, 26, 52, 26, INK, 3)
-        ln(2, 26, 34, 26, MUTED, 2)
-        ln(52, 26, 84, 26, MUTED, 2)
-        poly([(66, 6), (55, 44), (65, 44), (58, 80),
-              (82, 38), (71, 38), (79, 6)], GOLD)
+    def outline(self, x, y, width, height, color, weight):
+        self.canvas.border(self.origin_x + x, self.origin_y + y,
+                           width, height, color, weight)
 
-    elif kind == "talks":
-        dot(24, 22, 10, INK)
-        dot(62, 22, 10, accent)
-        poly([(4, 72), (10, 42), (38, 42), (44, 72)], INK)
-        poly([(42, 72), (48, 42), (76, 42), (82, 72)], accent)
-        box(18, 62, 50, 7, INK)
-        ln(36, 18, 52, 18, MUTED, 2)
-        dot(31, 18, 2, MUTED)
-        dot(57, 18, 2, MUTED)
-        ln(6, 80, 80, 80, MUTED, 2)
+    def paint(self, name):
+        illustrator = getattr(self, "paint_" + name, None)
+        if illustrator is None:
+            raise ValueError("no pictogram named %r" % name)
+        self.disk(43, 43, 41, ICON_BG)
+        illustrator()
 
-    elif kind == "market":
-        ln(8, 76, 80, 76, INK, 3)
-        ln(8, 10, 8, 76, INK, 3)
-        box(14, 56, 12, 19, accent)
-        box(30, 46, 12, 29, accent)
-        box(46, 34, 12, 41, accent)
-        box(62, 22, 12, 53, accent)
-        ln(12, 60, 32, 48, INK, 3)
-        ln(32, 48, 52, 36, INK, 3)
-        ln(52, 36, 80, 12, INK, 3)
-        poly([(80, 6), (86, 20), (72, 16)], INK)
+    def paint_gulf(self):
+        """A radar array, its mast, a blast and an incoming dart."""
+        antennae = (
+            ((32, 33), (20, 17), (12, 16)),
+            ((54, 33), (66, 17), (58, 16)),
+            ((32, 37), (20, 50), (12, 49)),
+            ((54, 37), (66, 50), (58, 49)),
+        )
+        for root, tip, cap in antennae:
+            self.stroke(root[0], root[1], tip[0], tip[1], INK)
+            self.slab(cap[0], cap[1], 16, 3, INK)
+        self.slab(32, 27, 22, 14, INK)
+        self.disk(43, 34, 3, WHITE)
+        self.polygon([(22, 52), (26, 61), (35, 64), (26, 67), (22, 78),
+                      (18, 67), (9, 64), (18, 61)], RED)
+        self.hoop(22, 64, 9, INK, 2)
+        self.stroke(22, 76, 22, 84, INK)
+        self.stroke(14, 84, 30, 84, INK)
+        self.polygon([(38, 72), (47, 79), (79, 59), (71, 51)], self.accent)
+        self.polygon([(72, 58), (83, 61), (77, 51)], INK)
+        self.polygon([(47, 79), (46, 71), (54, 75)], INK)
 
-    elif kind == "bank":
-        poly([(10, 30), (43, 8), (76, 30)], INK)
-        box(8, 30, 70, 6, INK)
-        for x in (14, 26, 38, 50, 62):
-            box(x, 36, 6, 30, accent)
-        box(6, 66, 74, 6, INK)
-        ln(78, 68, 84, 22, INK, 3)
-        poly([(84, 12), (86, 27), (76, 23)], RED)
-        box(72, 24, 10, 3, RED)
+    def paint_ship(self):
+        """A cargo vessel between channel walls under a missile arc."""
+        self.polygon([(0, 10), (16, 10), (11, 60), (0, 60)], MUTED)
+        self.polygon([(86, 10), (70, 10), (75, 60), (86, 60)], MUTED)
+        self.polygon([(14, 58), (72, 58), (64, 76), (22, 76)], INK)
+        self.slab(30, 46, 26, 12, INK)
+        self.slab(38, 38, 10, 8, INK)
+        self.stroke(43, 38, 43, 18, INK)
+        self.stroke(43, 20, 63, 32, RED)
+        self.polygon([(66, 34), (73, 38), (62, 41)], RED)
+        for start_x, end_x in ((6, 26), (30, 50), (54, 74)):
+            self.stroke(start_x, 81, end_x, 81, self.accent)
 
-    elif kind == "chip":
-        cv.border(ox + 20, oy + 16, 48, 52, INK, 3)
-        box(30, 26, 28, 32, accent)
-        box(37, 33, 14, 18, INK)
-        for x in (26, 38, 50, 62):
-            box(x, 9, 5, 7, INK)
-            box(x, 68, 5, 7, INK)
-        for y in (24, 36, 48, 60):
-            box(12, y, 8, 5, INK)
-            box(68, y, 8, 5, INK)
-        ln(4, 28, 12, 28, MUTED, 2)
-        ln(4, 28, 4, 58, MUTED, 2)
-        ln(4, 58, 12, 58, MUTED, 2)
-        ln(76, 38, 84, 38, MUTED, 2)
-        ln(84, 38, 84, 12, MUTED, 2)
-        dot(4, 58, 2, accent)
-        dot(84, 12, 2, accent)
+    def paint_grid(self):
+        """Transmission towers, strung wires and a gold lightning bolt."""
+        for base_x, peak_x in ((20, 39), (66, 47)):
+            self.stroke(base_x, 80, peak_x, 12, INK, 3)
+        for left, right, row in ((24, 62, 62), (29, 57, 44), (34, 52, 26)):
+            self.stroke(left, row, right, row, INK, 3)
+        self.stroke(2, 26, 34, 26, MUTED)
+        self.stroke(52, 26, 84, 26, MUTED)
+        self.polygon([(66, 6), (55, 44), (65, 44), (58, 80),
+                      (82, 38), (71, 38), (79, 6)], GOLD)
 
-    elif kind == "climate":
-        cv.ring(ox + 38, oy + 43, 31, INK, 3)
-        ln(38, 12, 38, 74, MUTED, 2)
-        ln(7, 43, 69, 43, MUTED, 2)
-        poly([(58, 72), (61, 28), (75, 28), (78, 72)], INK)
-        dot(64, 20, 5, MUTED)
-        dot(72, 12, 5, MUTED)
-        dot(80, 6, 4, MUTED)
-        ln(48, 80, 86, 24, RED, 3)
+    def paint_talks(self):
+        """Two delegates across a table with a link between their words."""
+        self.disk(24, 22, 10, INK)
+        self.disk(62, 22, 10, self.accent)
+        self.polygon([(4, 72), (10, 42), (38, 42), (44, 72)], INK)
+        self.polygon([(42, 72), (48, 42), (76, 42), (82, 72)], self.accent)
+        self.slab(18, 62, 50, 7, INK)
+        self.stroke(36, 18, 52, 18, MUTED)
+        self.disk(31, 18, 2, MUTED)
+        self.disk(57, 18, 2, MUTED)
+        self.stroke(6, 80, 80, 80, MUTED)
 
-    else:
-        raise ValueError("unknown icon %r" % kind)
+    def paint_market(self):
+        """Rising bars and a trend line breaking past its arrow tip."""
+        self.stroke(8, 76, 80, 76, INK, 3)
+        self.stroke(8, 10, 8, 76, INK, 3)
+        for bar_x, bar_top, bar_h in ((14, 56, 19), (30, 46, 29),
+                                      (46, 34, 41), (62, 22, 53)):
+            self.slab(bar_x, bar_top, 12, bar_h, self.accent)
+        trend = ((12, 60), (32, 48), (52, 36), (80, 12))
+        for start, finish in zip(trend, trend[1:]):
+            self.stroke(start[0], start[1], finish[0], finish[1], INK, 3)
+        self.polygon([(80, 6), (86, 20), (72, 16)], INK)
+
+    def paint_bank(self):
+        """Columned institution with an upwards inflation arrow."""
+        self.polygon([(10, 30), (43, 8), (76, 30)], INK)
+        self.slab(8, 30, 70, 6, INK)
+        for column_x in range(14, 63, 12):
+            self.slab(column_x, 36, 6, 30, self.accent)
+        self.slab(6, 66, 74, 6, INK)
+        self.stroke(78, 68, 84, 22, INK, 3)
+        self.polygon([(84, 12), (86, 27), (76, 23)], RED)
+        self.slab(72, 24, 10, 3, RED)
+
+    def paint_chip(self):
+        """Square processor with perimeter pins and circuit stubs."""
+        self.outline(20, 16, 48, 52, INK, 3)
+        self.slab(30, 26, 28, 32, self.accent)
+        self.slab(37, 33, 14, 18, INK)
+        for pin_x in (26, 38, 50, 62):
+            self.slab(pin_x, 9, 5, 7, INK)
+            self.slab(pin_x, 68, 5, 7, INK)
+        for pin_y in (24, 36, 48, 60):
+            self.slab(12, pin_y, 8, 5, INK)
+            self.slab(68, pin_y, 8, 5, INK)
+        traces = ((4, 28, 12, 28), (4, 28, 4, 58), (4, 58, 12, 58),
+                  (76, 38, 84, 38), (84, 38, 84, 12))
+        for x1, y1, x2, y2 in traces:
+            self.stroke(x1, y1, x2, y2, MUTED)
+        self.disk(4, 58, 2, self.accent)
+        self.disk(84, 12, 2, self.accent)
+
+    def paint_climate(self):
+        """Globe crossed by a smokestack plume and a red refusal slash."""
+        self.hoop(38, 43, 31, INK, 3)
+        self.stroke(38, 12, 38, 74, MUTED)
+        self.stroke(7, 43, 69, 43, MUTED)
+        self.polygon([(58, 72), (61, 28), (75, 28), (78, 72)], INK)
+        for puff_x, puff_y, puff_r in ((64, 20, 5), (72, 12, 5), (80, 6, 4)):
+            self.disk(puff_x, puff_y, puff_r, MUTED)
+        self.stroke(48, 80, 86, 24, RED, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -479,25 +506,39 @@ def draw_icon(cv, kind, ox, oy, accent):
 # ---------------------------------------------------------------------------
 
 def draw_masthead(cv):
-    cv.rect(16, 10, 992, 2, INK)
-    cv.rect(16, 14, 992, 1, LIGHT_RULE)
-    cv.text("THE WORLD IN ONE PAGE", 16, 16, 2, MUTED,
-            max_w=360, tag="mast-kicker-left")
-    right = "EIGHT STORIES"
-    cv.text(right, 1008 - text_width(right, 2), 16, 2, MUTED,
-            max_w=240, tag="mast-kicker-right")
+    left_edge, right_edge = 16, 1008
+    inner_width = right_edge - left_edge
 
-    cv.center_text("WORLD NEWS", 30, 9, INK, 16, 1008, tag="masthead-title")
+    def rule(top, thickness, color):
+        cv.rect(left_edge, top, inner_width, thickness, color)
 
-    cv.rect(16, 100, 992, 46, RED)
-    cv.border(16, 100, 992, 46, GOLD, 2)
-    cv.center_text(DATE_TEXT, 106, 5, WHITE, 16, 1008, tag="contest-date")
-    for cx in (242, 782):
-        cv.poly([(cx, 122), (cx + 7, 123), (cx, 125), (cx - 7, 123)], GOLD)
+    rule(10, 2, INK)
+    rule(14, 1, LIGHT_RULE)
 
-    beats = "WAR  \u00b7  DIPLOMACY  \u00b7  MARKETS  \u00b7  ECONOMY  \u00b7  TECH  \u00b7  CLIMATE"
-    cv.center_text(beats, 152, 2, MUTED, 16, 1008, tag="beats")
-    cv.rect(16, 170, 992, 2, INK)
+    kicker = "THE WORLD IN ONE PAGE"
+    edition_note = "EIGHT STORIES"
+    cv.text(kicker, left_edge, 16, 2, MUTED, max_w=360,
+            tag="mast-kicker-left")
+    cv.text(edition_note, right_edge - text_width(edition_note, 2), 16, 2,
+            MUTED, max_w=240, tag="mast-kicker-right")
+
+    cv.center_text("WORLD NEWS", 30, 9, INK, left_edge, right_edge,
+                   tag="masthead-title")
+
+    ribbon_y, ribbon_h = 100, 46
+    cv.rect(left_edge, ribbon_y, inner_width, ribbon_h, RED)
+    cv.border(left_edge, ribbon_y, inner_width, ribbon_h, GOLD, 2)
+    cv.center_text(DATE_TEXT, ribbon_y + 6, 5, WHITE, left_edge, right_edge,
+                   tag="contest-date")
+    for jewel_x in (242, 782):
+        cv.poly([(jewel_x, 122), (jewel_x + 7, 123),
+                 (jewel_x, 125), (jewel_x - 7, 123)], GOLD)
+
+    desk_strip = ("WAR  \u00b7  DIPLOMACY  \u00b7  MARKETS  \u00b7  "
+                  "ECONOMY  \u00b7  TECH  \u00b7  CLIMATE")
+    cv.center_text(desk_strip, 152, 2, MUTED, left_edge, right_edge,
+                   tag="beats")
+    rule(170, 2, INK)
 
 
 def draw_card(cv, story, cx, cy):
@@ -516,7 +557,7 @@ def draw_card(cv, story, cx, cy):
     assert 30 + 30 * (len(story["head"]) - 1) + 28 <= 89, "headline collides with rule"
     cv.rect(cx + 12, cy + 91, cw - 24, 1, LIGHT_RULE)
 
-    draw_icon(cv, story["icon"], cx + 12, cy + 96, accent)
+    Icon(cv, cx + 12, cy + 96, accent).paint(story["icon"])
     cv.rect(cx + 105, cy + 96, 1, 86, LIGHT_RULE)
 
     sub_top = 95 + story.get("sub_dy", 0)
@@ -529,28 +570,29 @@ def draw_card(cv, story, cx, cy):
 
 
 def draw_ticker(cv):
-    line_ys = [TICKER_TOP + TICKER_PITCH * i
-               for i in range(len(TICKER_LINES))]
-    # Check glyph rows, not just the nominal pitch, so a future edit cannot
-    # silently double-print the three lines on top of each other.
-    assert TICKER_PITCH - TICKER_GLYPH_H >= TICKER_CLEAR_ROWS, \
-        "ticker lines would touch"
-    for top, nxt in zip(line_ys, line_ys[1:]):
-        assert nxt - (top + TICKER_GLYPH_H) >= TICKER_CLEAR_ROWS, \
-            "ticker glyph rows overlap"
-    assert line_ys[0] >= TICKER_STRIP_TOP, "ticker line above strip"
-    assert line_ys[-1] + TICKER_GLYPH_H <= TICKER_STRIP_END - 1, \
-        "ticker line clipped at strip"
+    tops = [TICKER_TOP + TICKER_PITCH * step
+            for step in range(len(TICKER_LINES))]
+    # Verify glyph rows, not just the pitch: no two lines may touch and
+    # nothing may spill past the dark strip's lower boundary.
+    assert TICKER_PITCH >= TICKER_GLYPH_H + TICKER_CLEAR_ROWS, \
+        "ticker pitch too tight"
+    assert all(next_top - top >= TICKER_GLYPH_H + TICKER_CLEAR_ROWS
+               for top, next_top in zip(tops, tops[1:])), \
+        "ticker rows overlap"
+    assert tops[0] >= TICKER_STRIP_TOP, "ticker starts above its strip"
+    assert tops[-1] + TICKER_GLYPH_H < TICKER_STRIP_END, \
+        "ticker runs past its strip"
 
     cv.rect(16, TICKER_STRIP_TOP, 992, TICKER_STRIP_H, TICKER_BG)
     cv.rect(16, TICKER_STRIP_TOP, 78, TICKER_STRIP_H, RED)
-    # Align the label with the middle line of the three.
-    cv.text("LATEST", 20, line_ys[len(line_ys) // 2], TICKER_SCALE, WHITE,
-            max_w=74, tag="ticker-label")
     cv.rect(96, TICKER_STRIP_TOP + 4, 2, TICKER_STRIP_H - 10, GOLD)
-    for line, ty in zip(TICKER_LINES, line_ys):
-        cv.text(line, 106, ty, TICKER_SCALE, WHITE,
-                max_w=1024 - 16 - 106, tag="ticker-line")
+    centre_index = len(tops) // 2
+    for index, (headline, top) in enumerate(zip(TICKER_LINES, tops)):
+        if index == centre_index:
+            cv.text("LATEST", 20, top, TICKER_SCALE, WHITE,
+                    max_w=74, tag="ticker-label")
+        cv.text(headline, 106, top, TICKER_SCALE, WHITE,
+                max_w=WIDTH - 16 - 106, tag="ticker-line")
 
 
 def sweep_dates():
