@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
-"""Front page of 27 November 2026 - deterministic, stdlib-only PNG renderer.
+"""Deterministic, stdlib-only renderer of the 27 November 2026 front page.
 
-No network, no randomness, no timestamps. Output: $OUT_DIR/entry.png
+The only external input is OUT_DIR (default /output).  The sole output is
+$OUT_DIR/entry.png.  No clock, randomness, network access or third-party
+modules are used, so repeated runs are byte-identical.
 """
 
+import math
 import os
 import re
 import struct
 import zlib
 
+WIDTH = 1024
+HEIGHT = 1024
+
 # ---------------------------------------------------------------------------
-# Embedded 5x7 bitmap font.  Uppercase only, monospace with a one-column gap.
-# The zero is slashed so it can never be confused with the letter O.
+# Embedded 5x7 bitmap font.  Every glyph is a tuple of seven 5-bit rows.
+# The digit zero is slashed; it is deliberately different from the letter O.
 # ---------------------------------------------------------------------------
 
 FONT = {
@@ -41,7 +47,7 @@ FONT = {
     "X": ("10001", "10001", "01010", "00100", "01010", "10001", "10001"),
     "Y": ("10001", "10001", "01010", "00100", "00100", "00100", "00100"),
     "Z": ("11111", "00001", "00010", "00100", "01000", "10000", "11111"),
-    "0": ("01110", "10001", "10011", "10101", "11001", "10001", "01110"),
+    "0": ("01110", "10011", "10101", "10101", "10101", "11001", "01110"),
     "1": ("00100", "01100", "00100", "00100", "00100", "00100", "01110"),
     "2": ("01110", "10001", "00001", "00010", "00100", "01000", "11111"),
     "3": ("11110", "00001", "00001", "01110", "00001", "00001", "11110"),
@@ -65,36 +71,32 @@ FONT = {
     "%": ("11001", "11010", "00010", "00100", "01000", "01011", "10011"),
     "/": ("00001", "00001", "00010", "00100", "01000", "10000", "10000"),
     "&": ("01100", "10010", "10100", "01000", "10101", "10010", "01101"),
-    "(": ("00010", "00100", "01000", "01000", "01000", "00100", "00010"),
-    ")": ("01000", "00100", "00010", "00010", "00010", "00100", "01000"),
     "+": ("00000", "00100", "00100", "11111", "00100", "00100", "00000"),
     "=": ("00000", "00000", "11111", "00000", "11111", "00000", "00000"),
-    "*": ("00000", "10101", "01110", "11111", "01110", "10101", "00000"),
     "\u00b7": ("00000", "00000", "00000", "00110", "00000", "00000", "00000"),
 }
 
-# ASCII dot acts as the middle dot used in the ticker.
-FONT["\u00b7"] = FONT["\u00b7"]
+assert FONT["0"] != FONT["O"], "zero and O must be visually distinct"
+assert set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") <= set(FONT)
 
 
 def text_width(s, scale):
-    """Pixel width of a string in the 5x7 font at the given integer scale."""
+    """Exact pixel width of a string in this fixed-pitch font."""
     return (len(s) * 6 - 1) * scale
 
 
 # ---------------------------------------------------------------------------
-# Palette
+# Newspaper palette.
 # ---------------------------------------------------------------------------
 
-PAPER = (245, 242, 233)
+PAPER = (244, 241, 232)
 CARD = (255, 253, 247)
-INK = (24, 28, 32)
-MUTED = (85, 92, 99)
-RULE = (58, 64, 68)
-LIGHT_RULE = (206, 202, 190)
-RED = (166, 40, 40)
-GOLD = (203, 151, 55)
-TICKER_BG = (26, 32, 38)
+INK = (22, 27, 31)
+MUTED = (83, 90, 97)
+LIGHT_RULE = (207, 203, 191)
+RED = (163, 43, 42)
+GOLD = (201, 150, 53)
+TICKER_BG = (25, 31, 37)
 WHITE = (255, 253, 247)
 ICON_BG = (232, 234, 228)
 
@@ -103,7 +105,7 @@ DRAWN_STRINGS = []
 
 
 # ---------------------------------------------------------------------------
-# Canvas primitives
+# Canvas primitives and hand-rolled PNG encoding.
 # ---------------------------------------------------------------------------
 
 class Canvas:
@@ -145,8 +147,7 @@ class Canvas:
 
     def poly(self, points, color):
         ys = [p[1] for p in points]
-        y0 = max(0, int(min(ys)))
-        y1 = min(self.h, int(max(ys)) + 1)
+        y0, y1 = max(0, math.ceil(min(ys))), min(self.h, math.floor(max(ys)) + 1)
         for yy in range(y0, y1):
             xs = []
             for i, (ax, ay) in enumerate(points):
@@ -157,8 +158,7 @@ class Canvas:
                     xs.append(ax + (yy - ay) * (bx - ax) / (by - ay))
             xs.sort()
             for j in range(0, len(xs) - 1, 2):
-                left = int(-(-xs[j] // 1))   # ceil
-                right = int(xs[j + 1] // 1)  # floor
+                left, right = math.ceil(xs[j]), math.floor(xs[j + 1])
                 if right > left:
                     self.rect(left, yy, right - left, 1, color)
 
@@ -168,7 +168,7 @@ class Canvas:
                 if (x - cx) ** 2 + (y - cy) ** 2 <= r * r:
                     self.set(x, y, color)
 
-    def ring(self, cx, cy, r, color, t=2):
+    def ring(self, cx, cy, r, color, t=3):
         lo, hi = (r - t / 2) ** 2, (r + t / 2) ** 2
         for y in range(cy - r - t, cy + r + t + 1):
             for x in range(cx - r - t, cx + r + t + 1):
@@ -185,7 +185,7 @@ class Canvas:
         if max_w is not None and width > max_w:
             raise ValueError("%s overflow: %d > %d px: %r" % (tag, width, max_w, s))
         if x < 0 or y < 0 or x + width > self.w or y + 7 * scale > self.h:
-            raise ValueError("%s outside canvas: %r at (%d,%d) w=%d" % (tag, s, x, y, width))
+            raise ValueError("%s outside canvas: %r at (%d,%d)" % (tag, s, x, y))
         for i, ch in enumerate(s):
             glyph = FONT[ch]
             px = x + i * 6 * scale
@@ -193,7 +193,8 @@ class Canvas:
                 bits = glyph[row]
                 for col in range(5):
                     if bits[col] == "1":
-                        self.rect(px + col * scale, y + row * scale, scale, scale, color)
+                        self.rect(px + col * scale, y + row * scale,
+                                  scale, scale, color)
         DRAWN_STRINGS.append(s)
 
     def center_text(self, s, y, scale, color, x0=0, x1=None, tag="center"):
@@ -207,7 +208,7 @@ class Canvas:
         stride = self.w * 3
         raw = bytearray()
         for y in range(self.h):
-            raw.append(0)
+            raw.append(0)  # filter type: none
             raw.extend(self.buf[y * stride:(y + 1) * stride])
 
         def chunk(kind, data):
@@ -222,65 +223,105 @@ class Canvas:
 
 
 # ---------------------------------------------------------------------------
-# Story copy.  Every line is preselected to fit its measured container.
+# Copy.  Headlines are <=19 characters; sub-lines are <=30 characters so that
+# they fit their measured containers without clipping or manual shortening.
 # ---------------------------------------------------------------------------
 
 STORIES = [
     {
         "cat": "MIDEAST / GULF", "color": (151, 57, 46), "icon": "gulf",
-        "head": ["DRONE STRIKE KILLS TWO", "ITALIAN TECHNICIANS"],
-        "sub": ["KUWAIT AIR-DEFENCE SITE HIT", "ITALY, KUWAIT BLAME IRAN",
-                "IRAN DENIES, OFFERS A JOINT", "INQUIRY; ATTACKS ON KUWAIT",
-                "AND BAHRAIN ESCALATE"],
+        "head": ["DRONE STRIKE KILLS", "TWO ITALIAN TECHS"],
+        "sub": [
+            "RHEINMETALL STAFF AT SITE",
+            "KUWAIT AIR-DEFENCE POST HIT",
+            "ITALY, KUWAIT BLAME IRAN",
+            "IRAN DENIES, OFFERS A JOINT",
+            "INQUIRY; ATTACKS ON KUWAIT",
+            "AND BAHRAIN ESCALATE",
+        ],
     },
     {
         "cat": "IRAN-US WAR", "color": (96, 47, 51), "icon": "ship",
-        "head": ["150 MISSILES FIRED", "DEFEND COMMERCIAL SHIPS"],
-        "sub": ["HORMUZ FIGHTING CONTINUES", "TRUMP, ON THANKSGIVING CALL,",
-                "TELLS TROOPS: US GIVES IRAN", "'EVERY OPPORTUNITY' TO DEAL;",
-                "DOUBTS TEHRAN WILL TAKE IT"],
+        "head": ["150 MISSILES FIRED", "TO DEFEND SHIPPING"],
+        "sub": [
+            "HORMUZ FIGHTING GOES ON",
+            "TRUMP, ON THANKSGIVING",
+            "CALL TO TROOPS: US GIVES",
+            "IRAN 'EVERY OPPORTUNITY'",
+            "TO DEAL; DOUBTS TEHRAN",
+            "WILL TAKE IT",
+        ],
     },
     {
-        "cat": "RUSSIA / UKRAINE", "color": (51, 80, 118), "icon": "grid",
+        "cat": "RUSSIA / UKRAINE", "color": (49, 79, 118), "icon": "grid",
         "head": ["RUSSIA READIES NEW", "MASS GRID STRIKE"],
-        "sub": ["ZELENSKIY WARNS OF AN", "ATTACK 'IN THE COMING DAYS'",
-                "MISSILES WOUND SEVEN IN KYIV", "AND HIT A SHOPPING CENTRE;",
-                "DRONES STRIKE RUSSIAN OIL", "SITES IN THREE REGIONS"],
+        "sub": [
+            "ZELENSKIY WARNS OF A",
+            "STRIKE 'IN COMING DAYS'",
+            "MISSILES WOUND SEVEN IN",
+            "KYIV; SHOPPING CENTRE HIT",
+            "DRONES HIT OIL: KRASNODAR",
+            "BASHKORTOSTAN, VOLGOGRAD",
+        ],
     },
     {
         "cat": "TRUMP / PUTIN", "color": (58, 88, 73), "icon": "talks",
-        "head": ["TRUMP URGES PUTIN TO", "PULL BACK AGGRESSION"],
-        "sub": ["ACROSS EUROPE, AFTER TALKS", "IN CHINA; WAR IS A 'COMPLETE",
-                "BLOODBATH'. KUSHNER SAYS", "PUTIN PLEDGED NOT TO USE",
-                "NUCLEAR WEAPONS; TRUMP AND", "RUTTE URGE NO WAR EXPANSION"],
+        "head": ["TRUMP URGES PUTIN", "TO PULL BACK"],
+        "sub": [
+            "CHINA TALKS; RUTTE URGES",
+            "END ALL MILITARY AGGRESSION",
+            "IN EUROPE; WAR IS A",
+            "'COMPLETE BLOODBATH'",
+            "KUSHNER: PUTIN PLEDGED NOT",
+            "TO USE NUCLEAR WEAPONS",
+        ],
     },
     {
-        "cat": "MARKETS", "color": (47, 100, 93), "icon": "market",
-        "head": ["ASIAN STOCKS RISE AGAIN", "BRENT CRUDE TOPS $96"],
-        "sub": ["BUYERS RETURN TO AI NAMES", "FOR A SECOND DAY; HOUTHIS",
-                "STRIKE A SAUDI REFINERY,", "SENDING OIL HIGHER;",
-                "WALL ST. OPENS A SHORTENED", "BLACK FRIDAY SESSION"],
+        "cat": "MARKETS", "color": (45, 99, 92), "icon": "market",
+        "head": ["BRENT TOPS $96", "ASIAN STOCKS RISE"],
+        "sub": [
+            "AI BUYERS RETURN FOR A",
+            "SECOND DAY OF GAINS",
+            "HOUTHIS HIT A SAUDI",
+            "REFINERY, LIFTING OIL",
+            "WALL ST OPENS A SHORT",
+            "BLACK FRIDAY SESSION",
+        ],
     },
     {
-        "cat": "JAPAN ECONOMY", "color": (127, 85, 43), "icon": "bank",
-        "head": ["TOKYO INFLATION HITS", "16-MONTH HIGH: 2.9%"],
-        "sub": ["CORE PRICES ACCELERATE TO", "A 16-MONTH HIGH, CEMENTING",
-                "THE CASE FOR A BOJ HIKE AS", "EARLY AS NEXT MONTH; POLICY",
-                "RATE STANDS AT 1.25%"],
+        "cat": "JAPAN ECONOMY", "color": (126, 85, 43), "icon": "bank",
+        "head": ["TOKYO PRICES", "CLIMB 2.9%"],
+        "sub": [
+            "CORE INFLATION AT A",
+            "16-MONTH HIGH, CEMENTING",
+            "THE CASE FOR A BOJ HIKE",
+            "AS SOON AS NEXT MONTH;",
+            "POLICY RATE: 1.25%",
+        ],
+        "sub_dy": 4, "min_gap": 12,
     },
     {
         "cat": "TECH / AI", "color": (72, 66, 116), "icon": "chip",
-        "head": ["SAP TO CUT AT LEAST", "10,000 JOBS FOR AI"],
-        "sub": ["TRUMP PROPOSES MAX TARIFFS", "OF 20-40% ON 14 MAJOR",
-                "TRADING PARTNERS, WITH", "CHINA; HUAWEI PREPS A NEW",
-                "HIGH-BANDWIDTH MEMORY CHIP"],
+        "head": ["SAP PLANS AT LEAST", "10,000 JOB CUTS"],
+        "sub": [
+            "RETOOL FOR THE AI ERA;",
+            "TRUMP PROPOSES 20-40% MAX",
+            "TARIFFS ON 14 PARTNERS,",
+            "INCLUDING CHINA; HUAWEI PREPS",
+            "NEW HIGH-BANDWIDTH MEMORY CHIP",
+        ],
+        "sub_dy": 4, "min_gap": 12,
     },
     {
         "cat": "CLIMATE", "color": (52, 104, 65), "icon": "climate",
         "head": ["UN TALKS DEADLOCKED", "ON FOSSIL FUELS"],
-        "sub": ["AT UN TREATY TALKS, A DRAFT", "OMITS FOSSIL-FUEL LANGUAGE;",
-                "NEGOTIATORS ARE AT AN", "IMPASSE AND THE EU REFUSES",
-                "TO ENDORSE THE TEXT"],
+        "sub": [
+            "TREATY NEGOTIATORS AT",
+            "AN IMPASSE AS A DRAFT",
+            "OMITS FOSSIL-FUEL WORDS",
+            "EU REFUSES TO ENDORSE",
+            "THE TEXT",
+        ],
     },
 ]
 
@@ -290,9 +331,21 @@ TICKER_LINES = [
     "RUSSIA DIPLOMAT WARNS NUCLEAR RISK  \u00b7  GOLD $3,572",
 ]
 
+# Each 5x7 glyph drawn at 2x occupies 14 rows.  A 17 px pitch leaves 3 clear
+# rows between consecutive ticker lines; the 50 px strip (rows 968..1017)
+# keeps one row of padding above the first glyph and below the last one.
+TICKER_SCALE = 2
+TICKER_GLYPH_H = 7 * TICKER_SCALE            # 14 px
+TICKER_CLEAR_ROWS = 3
+TICKER_PITCH = TICKER_GLYPH_H + TICKER_CLEAR_ROWS  # 17 px, not 14 or 15
+TICKER_STRIP_TOP = 968
+TICKER_STRIP_H = 50
+TICKER_STRIP_END = TICKER_STRIP_TOP + TICKER_STRIP_H  # exclusive: 1018
+TICKER_TOP = TICKER_STRIP_TOP + 1            # 969
+
 
 # ---------------------------------------------------------------------------
-# Pictograms: flat shapes drawn in local coordinates (0..92, 0..84).
+# Flat pictograms, drawn in an 86x86 local box over a pale anchor disc.
 # ---------------------------------------------------------------------------
 
 def draw_icon(cv, kind, ox, oy, accent):
@@ -308,191 +361,225 @@ def draw_icon(cv, kind, ox, oy, accent):
     def dot(cx, cy, r, c):
         cv.disc(ox + cx, oy + cy, r, c)
 
-    # Pale disc keeps each pictogram anchored and fills the icon area.
-    cv.disc(ox + 46, oy + 42, 41, ICON_BG)
+    cv.disc(ox + 43, oy + 43, 41, ICON_BG)
 
     if kind == "gulf":
-        # Reconnaissance drone above, incoming missile and impact below.
-        ln(46, 24, 22, 12, INK, 3)
-        ln(46, 24, 70, 12, INK, 3)
-        ln(46, 24, 22, 38, INK, 3)
-        ln(46, 24, 70, 38, INK, 3)
-        box(35, 17, 22, 14, INK)
-        box(14, 9, 16, 3, INK)
-        box(62, 9, 16, 3, INK)
-        box(14, 38, 16, 3, INK)
-        box(62, 38, 16, 3, INK)
-        dot(46, 31, 3, WHITE)
-        poly([(70, 47), (77, 50), (61, 72), (56, 64)], accent)
-        poly([(56, 64), (61, 72), (49, 71), (52, 65)], INK)
-        ln(46, 70, 37, 78, RED, 3)
-        ln(60, 56, 69, 51, RED, 3)
-        box(43, 76, 7, 3, RED)
+        ln(32, 33, 20, 17, INK, 2)
+        ln(54, 33, 66, 17, INK, 2)
+        ln(32, 37, 20, 50, INK, 2)
+        ln(54, 37, 66, 50, INK, 2)
+        box(12, 16, 16, 3, INK)
+        box(58, 16, 16, 3, INK)
+        box(12, 49, 16, 3, INK)
+        box(58, 49, 16, 3, INK)
+        box(32, 27, 22, 14, INK)
+        dot(43, 34, 3, WHITE)
+        # Air-defence radar under attack: a burst behind the dish plus an
+        # incoming projectile with a pointed nose and swept tail fins.
+        poly([(22, 52), (26, 61), (35, 64), (26, 67), (22, 78),
+              (18, 67), (9, 64), (18, 61)], RED)
+        cv.ring(ox + 22, oy + 64, 9, INK, 2)
+        ln(22, 76, 22, 84, INK, 2)
+        ln(14, 84, 30, 84, INK, 2)
+        poly([(38, 72), (47, 79), (79, 59), (71, 51)], accent)
+        poly([(72, 58), (83, 61), (77, 51)], INK)
+        poly([(47, 79), (46, 71), (54, 75)], INK)
 
     elif kind == "ship":
-        # Two shorelines frame a strait; a missile crosses above a warship.
-        poly([(0, 8), (11, 8), (8, 60), (0, 60)], MUTED)
-        poly([(92, 8), (81, 8), (84, 60), (92, 60)], MUTED)
-        poly([(17, 58), (75, 58), (67, 74), (25, 74)], INK)
-        box(31, 47, 30, 11, INK)
-        ln(46, 47, 46, 21, INK, 3)
-        ln(46, 23, 58, 31, accent, 3)
-        poly([(82, 16), (86, 29), (73, 22)], RED)
-        ln(78, 24, 57, 39, RED, 2)
-        ln(14, 79, 30, 79, accent, 2)
-        ln(34, 79, 50, 79, accent, 2)
-        ln(54, 79, 70, 79, accent, 2)
-        ln(74, 79, 90, 79, accent, 2)
+        poly([(0, 10), (16, 10), (11, 60), (0, 60)], MUTED)
+        poly([(86, 10), (70, 10), (75, 60), (86, 60)], MUTED)
+        poly([(14, 58), (72, 58), (64, 76), (22, 76)], INK)
+        box(30, 46, 26, 12, INK)
+        box(38, 38, 10, 8, INK)
+        ln(43, 38, 43, 18, INK, 2)
+        ln(43, 20, 63, 32, RED, 2)
+        poly([(66, 34), (73, 38), (62, 41)], RED)
+        ln(6, 81, 26, 81, accent, 2)
+        ln(30, 81, 50, 81, accent, 2)
+        ln(54, 81, 74, 81, accent, 2)
 
     elif kind == "grid":
-        # Transmission pylon with a lightning strike on the power grid.
-        ln(26, 80, 41, 14, INK, 3)
-        ln(62, 80, 47, 14, INK, 3)
-        ln(32, 56, 56, 56, INK, 3)
-        ln(28, 40, 60, 40, INK, 3)
-        ln(36, 25, 52, 25, INK, 3)
-        ln(30, 66, 58, 66, accent, 3)
-        ln(2, 25, 36, 25, MUTED, 2)
-        ln(52, 25, 90, 25, MUTED, 2)
-        poly([(66, 8), (57, 43), (66, 43), (59, 80),
-              (80, 38), (70, 38), (77, 8)], GOLD)
+        ln(20, 80, 39, 12, INK, 3)
+        ln(66, 80, 47, 12, INK, 3)
+        ln(24, 62, 62, 62, INK, 3)
+        ln(29, 44, 57, 44, INK, 3)
+        ln(34, 26, 52, 26, INK, 3)
+        ln(2, 26, 34, 26, MUTED, 2)
+        ln(52, 26, 84, 26, MUTED, 2)
+        poly([(66, 6), (55, 44), (65, 44), (58, 80),
+              (82, 38), (71, 38), (79, 6)], GOLD)
 
     elif kind == "talks":
-        # Two delegations facing each other across a table.
-        dot(27, 25, 10, INK)
-        dot(65, 25, 10, accent)
-        poly([(6, 72), (13, 43), (35, 43), (43, 72)], INK)
-        poly([(48, 72), (56, 43), (78, 43), (86, 72)], accent)
-        box(32, 62, 28, 6, INK)
-        ln(35, 20, 58, 20, MUTED, 2)
-        dot(34, 20, 2, MUTED)
-        dot(59, 20, 2, MUTED)
-        ln(18, 79, 74, 79, MUTED, 2)
+        dot(24, 22, 10, INK)
+        dot(62, 22, 10, accent)
+        poly([(4, 72), (10, 42), (38, 42), (44, 72)], INK)
+        poly([(42, 72), (48, 42), (76, 42), (82, 72)], accent)
+        box(18, 62, 50, 7, INK)
+        ln(36, 18, 52, 18, MUTED, 2)
+        dot(31, 18, 2, MUTED)
+        dot(57, 18, 2, MUTED)
+        ln(6, 80, 80, 80, MUTED, 2)
 
     elif kind == "market":
-        # Rising bars and an unmistakable up-arrow.
-        ln(8, 76, 88, 76, INK, 3)
-        box(12, 54, 14, 21, accent)
-        box(32, 43, 14, 32, accent)
-        box(52, 31, 14, 44, accent)
-        box(72, 19, 14, 56, accent)
-        ln(10, 58, 33, 46, INK, 3)
-        ln(33, 46, 55, 34, INK, 3)
-        ln(55, 34, 84, 10, INK, 3)
-        poly([(84, 4), (92, 18), (76, 15)], INK)
+        ln(8, 76, 80, 76, INK, 3)
+        ln(8, 10, 8, 76, INK, 3)
+        box(14, 56, 12, 19, accent)
+        box(30, 46, 12, 29, accent)
+        box(46, 34, 12, 41, accent)
+        box(62, 22, 12, 53, accent)
+        ln(12, 60, 32, 48, INK, 3)
+        ln(32, 48, 52, 36, INK, 3)
+        ln(52, 36, 80, 12, INK, 3)
+        poly([(80, 6), (86, 20), (72, 16)], INK)
 
     elif kind == "bank":
-        # Central bank facade and an upward policy arrow.
-        poly([(14, 31), (42, 10), (70, 31)], INK)
-        box(12, 31, 60, 6, INK)
-        for x in (17, 29, 41, 53, 65):
-            box(x, 37, 5, 30, accent)
-        box(10, 67, 64, 6, INK)
-        ln(78, 70, 88, 20, INK, 3)
-        poly([(88, 12), (93, 28), (80, 24)], RED)
-        box(75, 26, 10, 3, RED)
+        poly([(10, 30), (43, 8), (76, 30)], INK)
+        box(8, 30, 70, 6, INK)
+        for x in (14, 26, 38, 50, 62):
+            box(x, 36, 6, 30, accent)
+        box(6, 66, 74, 6, INK)
+        ln(78, 68, 84, 22, INK, 3)
+        poly([(84, 12), (86, 27), (76, 23)], RED)
+        box(72, 24, 10, 3, RED)
 
     elif kind == "chip":
-        # Processor with pins and circuit traces.
-        cv.border(ox + 24, oy + 18, 46, 48, INK, 3)
-        box(34, 28, 26, 28, accent)
-        box(40, 34, 14, 16, INK)
-        for x in (30, 42, 54, 66):
-            box(x, 12, 5, 6, INK)
-            box(x, 66, 5, 6, INK)
-        for y in (26, 38, 50, 62):
-            box(16, y, 8, 5, INK)
-            box(70, y, 8, 5, INK)
-        ln(8, 28, 16, 28, MUTED, 2)
-        ln(8, 28, 8, 56, MUTED, 2)
-        ln(8, 56, 16, 56, MUTED, 2)
-        ln(78, 38, 86, 38, MUTED, 2)
-        ln(86, 38, 86, 14, MUTED, 2)
-        dot(8, 56, 2, accent)
-        dot(86, 14, 2, accent)
+        cv.border(ox + 20, oy + 16, 48, 52, INK, 3)
+        box(30, 26, 28, 32, accent)
+        box(37, 33, 14, 18, INK)
+        for x in (26, 38, 50, 62):
+            box(x, 9, 5, 7, INK)
+            box(x, 68, 5, 7, INK)
+        for y in (24, 36, 48, 60):
+            box(12, y, 8, 5, INK)
+            box(68, y, 8, 5, INK)
+        ln(4, 28, 12, 28, MUTED, 2)
+        ln(4, 28, 4, 58, MUTED, 2)
+        ln(4, 58, 12, 58, MUTED, 2)
+        ln(76, 38, 84, 38, MUTED, 2)
+        ln(84, 38, 84, 12, MUTED, 2)
+        dot(4, 58, 2, accent)
+        dot(84, 12, 2, accent)
 
     elif kind == "climate":
-        # Globe, smokestack and the red slash of a deadlocked draft.
-        cv.ring(ox + 41, oy + 45, 32, INK, 3)
-        ln(41, 13, 41, 77, MUTED, 2)
-        ln(9, 45, 73, 45, MUTED, 2)
-        poly([(64, 72), (67, 30), (79, 30), (82, 72)], INK)
-        dot(70, 22, 5, MUTED)
-        dot(78, 14, 6, MUTED)
-        dot(88, 8, 4, MUTED)
-        ln(57, 80, 91, 26, RED, 3)
+        cv.ring(ox + 38, oy + 43, 31, INK, 3)
+        ln(38, 12, 38, 74, MUTED, 2)
+        ln(7, 43, 69, 43, MUTED, 2)
+        poly([(58, 72), (61, 28), (75, 28), (78, 72)], INK)
+        dot(64, 20, 5, MUTED)
+        dot(72, 12, 5, MUTED)
+        dot(80, 6, 4, MUTED)
+        ln(48, 80, 86, 24, RED, 3)
+
+    else:
+        raise ValueError("unknown icon %r" % kind)
 
 
 # ---------------------------------------------------------------------------
-# Page composition
+# Page composition.
 # ---------------------------------------------------------------------------
 
 def draw_masthead(cv):
-    cv.rect(18, 10, 988, 2, INK)
-    cv.text("GLOBAL EDITION", 18, 15, 2, MUTED, max_w=300, tag="mast-kicker-l")
+    cv.rect(16, 10, 992, 2, INK)
+    cv.rect(16, 14, 992, 1, LIGHT_RULE)
+    cv.text("THE WORLD IN ONE PAGE", 16, 16, 2, MUTED,
+            max_w=360, tag="mast-kicker-left")
     right = "EIGHT STORIES"
-    cv.text(right, 1006 - text_width(right, 2), 15, 2, MUTED,
-            max_w=300, tag="mast-kicker-r")
-    cv.center_text("WORLD NEWS", 34, 9, INK, tag="masthead-title")
+    cv.text(right, 1008 - text_width(right, 2), 16, 2, MUTED,
+            max_w=240, tag="mast-kicker-right")
 
-    cv.rect(18, 104, 988, 46, RED)
-    cv.rect(21, 107, 982, 40, RED)
-    cv.border(18, 104, 988, 46, GOLD, 2)
-    cv.center_text(DATE_TEXT, 109, 5, WHITE, tag="contest-date")
-    for cx in (247, 777):
-        cv.poly([(cx, 121), (cx + 6, 127), (cx, 133), (cx - 6, 127)], GOLD)
-    cv.center_text("WAR  \u00b7  DIPLOMACY  \u00b7  MARKETS  \u00b7  ECONOMY  \u00b7  TECH  \u00b7  CLIMATE",
-                   157, 2, MUTED, x0=18, x1=1006, tag="beats")
+    cv.center_text("WORLD NEWS", 30, 9, INK, 16, 1008, tag="masthead-title")
+
+    cv.rect(16, 100, 992, 46, RED)
+    cv.border(16, 100, 992, 46, GOLD, 2)
+    cv.center_text(DATE_TEXT, 106, 5, WHITE, 16, 1008, tag="contest-date")
+    for cx in (242, 782):
+        cv.poly([(cx, 122), (cx + 7, 123), (cx, 125), (cx - 7, 123)], GOLD)
+
+    beats = "WAR  \u00b7  DIPLOMACY  \u00b7  MARKETS  \u00b7  ECONOMY  \u00b7  TECH  \u00b7  CLIMATE"
+    cv.center_text(beats, 152, 2, MUTED, 16, 1008, tag="beats")
+    cv.rect(16, 170, 992, 2, INK)
 
 
 def draw_card(cv, story, cx, cy):
-    cw, ch = 488, 176
+    cw, ch = 490, 194
     accent = story["color"]
+
     cv.rect(cx, cy, cw, ch, CARD)
     cv.border(cx, cy, cw, ch, LIGHT_RULE, 1)
-    cv.rect(cx + 1, cy + 1, cw - 2, 23, accent)
-    cv.text(story["cat"], cx + 11, cy + 5, 2, WHITE,
-            max_w=cw - 22, tag="card-category")
+    cv.rect(cx + 1, cy + 1, cw - 2, 26, accent)
+    cv.text(story["cat"], cx + 10, cy + 3, 3, WHITE,
+            max_w=cw - 20, tag="category")
 
     for i, line in enumerate(story["head"]):
-        cv.text(line, cx + 14, cy + 30 + 24 * i, 3, INK,
-                max_w=cw - 28, tag="card-headline")
-    cv.rect(cx + 12, cy + 77, cw - 24, 1, LIGHT_RULE)
+        cv.text(line, cx + 12, cy + 30 + 30 * i, 4, INK,
+                max_w=cw - 24, tag="headline")
+    assert 30 + 30 * (len(story["head"]) - 1) + 28 <= 89, "headline collides with rule"
+    cv.rect(cx + 12, cy + 91, cw - 24, 1, LIGHT_RULE)
 
-    draw_icon(cv, story["icon"], cx + 14, cy + 82, accent)
+    draw_icon(cv, story["icon"], cx + 12, cy + 96, accent)
+    cv.rect(cx + 105, cy + 96, 1, 86, LIGHT_RULE)
+
+    sub_top = 95 + story.get("sub_dy", 0)
     for i, line in enumerate(story["sub"]):
-        cv.text(line, cx + 120, cy + 82 + 15 * i, 2, MUTED,
-                max_w=cw - 132, tag="card-sub")
+        cv.text(line, cx + 118, cy + sub_top + 16 * i, 2, MUTED,
+                max_w=cw - 130, tag="sub-line")
+    last_bottom = sub_top + 16 * (len(story["sub"]) - 1) + 14
+    min_gap = story.get("min_gap", 5)
+    assert ch - last_bottom >= min_gap, "sub-line too close to card bottom"
 
 
 def draw_ticker(cv):
-    cv.rect(18, 924, 988, 82, TICKER_BG)
-    cv.rect(18, 932, 80, 66, RED)
-    cv.text("LATEST", 23, 958, 2, WHITE, max_w=70, tag="ticker-label")
-    cv.rect(104, 932, 2, 66, GOLD)
-    for i, line in enumerate(TICKER_LINES):
-        cv.text(line, 112, 934 + 24 * i, 2, WHITE,
-                max_w=882, tag="ticker-line")
+    line_ys = [TICKER_TOP + TICKER_PITCH * i
+               for i in range(len(TICKER_LINES))]
+    # Check glyph rows, not just the nominal pitch, so a future edit cannot
+    # silently double-print the three lines on top of each other.
+    assert TICKER_PITCH - TICKER_GLYPH_H >= TICKER_CLEAR_ROWS, \
+        "ticker lines would touch"
+    for top, nxt in zip(line_ys, line_ys[1:]):
+        assert nxt - (top + TICKER_GLYPH_H) >= TICKER_CLEAR_ROWS, \
+            "ticker glyph rows overlap"
+    assert line_ys[0] >= TICKER_STRIP_TOP, "ticker line above strip"
+    assert line_ys[-1] + TICKER_GLYPH_H <= TICKER_STRIP_END - 1, \
+        "ticker line clipped at strip"
+
+    cv.rect(16, TICKER_STRIP_TOP, 992, TICKER_STRIP_H, TICKER_BG)
+    cv.rect(16, TICKER_STRIP_TOP, 78, TICKER_STRIP_H, RED)
+    # Align the label with the middle line of the three.
+    cv.text("LATEST", 20, line_ys[len(line_ys) // 2], TICKER_SCALE, WHITE,
+            max_w=74, tag="ticker-label")
+    cv.rect(96, TICKER_STRIP_TOP + 4, 2, TICKER_STRIP_H - 10, GOLD)
+    for line, ty in zip(TICKER_LINES, line_ys):
+        cv.text(line, 106, ty, TICKER_SCALE, WHITE,
+                max_w=1024 - 16 - 106, tag="ticker-line")
+
+
+def sweep_dates():
+    """Only the single masthead date may contain a month name or a year."""
+    forbidden = (r"JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|"
+                 r"SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER|20\d\d")
+    for s in DRAWN_STRINGS:
+        if s != DATE_TEXT and re.search(forbidden, s):
+            raise ValueError("unexpected date-like text: %r" % s)
 
 
 def render():
-    cv = Canvas(1024, 1024)
-    cv.rect(0, 0, 1024, 1024, PAPER)
+    DRAWN_STRINGS.clear()
+    cv = Canvas(WIDTH, HEIGHT)
+    cv.rect(0, 0, WIDTH, HEIGHT, PAPER)
     draw_masthead(cv)
     for idx, story in enumerate(STORIES):
         col, row = idx % 2, idx // 2
-        draw_card(cv, story, 18 + col * 500, 180 + row * 186)
+        draw_card(cv, story, 16 + col * 502, 178 + row * 198)
     draw_ticker(cv)
-
-    # Date sweep: the only month or year in the entire image is the masthead.
-    for s in DRAWN_STRINGS:
-        if s != DATE_TEXT and re.search(r"NOVEMBER|DECEMBER|20\d\d|JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER", s):
-            raise ValueError("unexpected date-like text: %r" % s)
+    sweep_dates()
 
     png = cv.to_png()
     if len(png) > 1024 * 1024:
-        raise ValueError("PNG exceeds 1 MiB")
-    out_dir = os.environ.get("OUT_DIR", "/output")
+        raise ValueError("PNG exceeds 1 MiB: %d bytes" % len(png))
+    if WIDTH > 1024 or HEIGHT > 1024:
+        raise ValueError("PNG dimensions exceed 1024x1024")
+
+    out_dir = os.environ.get("OUT_DIR") or "/output"
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "entry.png")
     with open(out_path, "wb") as fh:
