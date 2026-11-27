@@ -1,10 +1,22 @@
 # FIXES.md — defect sweep (one defect per line)
 
-- Defect: the Russia/Ukraine card omitted the oil-region specificity; fixed by adding "SITES IN THREE REGIONS" as a full sub-line while keeping every measured line inside its card.
-- Defect: "pledged no nuclear weapons" could be misread as a pledge about possession rather than use; fixed to "PUTIN PLEDGED NOT TO USE / NUCLEAR WEAPONS" (faithful to the report).
-- Defect: digit 0 could be mistaken for letter O; fixed with a distinct slashed zero glyph in the embedded 5x7 font, verified against the separate O glyph.
-- Defect: headline/sub-lines risk clipping at card edges; fixed with `text()` width assertions (headlines <=460 px, sub-lines <=356 px) plus vertical spacing checks (last sub-line ends 5 px above the card border).
-- Defect: extra date-like text risk in story copy; fixed with a render-time sweep that rejects any month or year string other than the single masthead date "27 NOVEMBER 2026".
-- Defect: small pictograms could leave empty card bodies; fixed by scaling all flat icons into a 92x84 area over a pale anchor disc, plus measured ink coverage in every card zone.
+- Defect: date leakage risk; fixed by a render-time sweep that rejects any month name or four-digit year outside the single masthead string "27 NOVEMBER 2026".
+- Defect: zero/O ambiguity in financial copy; fixed with a slashed zero glyph that is asserted to differ from the letter O.
+- Defect: headline clipping at card edges; fixed with 4x headlines measured against a 466 px limit on every line.
+- Defect: sub-line clipping at card edges; fixed with 2x sub-lines measured against a 360 px limit on every line.
+- Defect: sub-line collision with the card border; fixed with a vertical assertion that the final line ends at least 5 px above the border.
+- Defect: category header clipping; fixed with 3x labels measured against a 470 px limit.
+- Defect: ticker overflow; fixed by splitting the strip into three lines measured against a 902 px limit (widest line is 598 px).
+- Defect: empty card bodies; fixed with 86x86 flat pictograms over anchor discs and five or six dense copy lines in every card (measured icon ink 40-63%).
+- Defect: ambiguous nuclear wording; fixed to "KUSHNER: PUTIN PLEDGED NOT / TO USE NUCLEAR WEAPONS", faithful to the report.
+- Defect: missing Rutte/no-expansion cue; fixed with "CHINA TALKS; RUTTE URGES / END ALL MILITARY AGGRESSION".
 - Defect: wrong output filename risk; fixed by writing only `$OUT_DIR/entry.png` (default `/output`).
-- Verified clean: final two runs produced byte-identical 28,606-byte PNGs, sha256 `f15ba95e2a14e73192a5b1d8f308ce7bb13a9a9686df6d9a473d64d2f3f5408e`; PNG is 1024x1024 with valid CRCs, and the only month/year text in the image is the masthead date.
+- Defect: dangling "KUWAIT AND" break in the Gulf copy; fixed to "INQUIRY; ATTACKS ON KUWAIT / AND BAHRAIN ESCALATE".
+- Defect: HBM copy cut off at "MEMORY"; fixed to "HIGH-BANDWIDTH MEMORY CHIP".
+- Defect: ambiguous parallelogram in the Gulf pictogram; fixed with a pointed drone-delivered projectile aimed at a radar dish inside an impact burst, with no stray edge artifacts.
+- Defect: only 1 px between sub-lines; fixed with 2 px gaps (16 px pitch), 4 px taller cards and a 4 px ticker gutter.
+- Defect: bottom LATEST ticker lines overlapped against 14 px glyphs; fixed by deriving the pitch from the glyph height (14 + 3 clear rows = 17 px), enlarging the strip to rows 968..1017 without touching the card gutter, placing lines at y=969/986/1003, and asserting real glyph-row separation plus strip padding rather than a nominal pitch.
+- Defect: TECH/AI headline "SAP TO CUT AT LEAST 10,000 JOBS" crowded the sub-lines; fixed by shortening it to "SAP PLANS AT LEAST / 10,000 JOB CUTS" and reflowing the copy into five wider-spaced sub-lines offset 4 px lower (17 px bottom margin).
+- Defect: JAPAN ECONOMY last sub-line "1.25%" sat 5 px above the card border; fixed by reflowing to five lines ending "POLICY RATE: 1.25%" with a 4 px offset and an asserted 12 px minimum bottom margin.
+- Defect: masthead kicker glyphs collided with the top two rows of "WORLD NEWS"; fixed by raising both kicker strings from y=18 to y=16 (re-verified zero text-box overlaps).
+- Verified clean: two runs produced byte-identical 29,372-byte PNGs with sha256 `3b1041aa55925bc5d17161fb9c94aa6c5bc9c4a5460f76d78f6d8a25d9f62f32`; the PNG is 1024x1024 with valid CRCs, the three ticker glyph bands (969..982, 986..999, 1003..1016) have 3 blank rows between them and 1 px strip padding, and all dimension, size, date, glyph, line-width, overlap and margin checks pass.
